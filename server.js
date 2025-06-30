@@ -7,15 +7,9 @@ const fs = require("fs");
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
-});
+const io = socketIo(server);
 
-const PORT = process.env.PORT || 3000;
-
+const PORT = 3000;
 // Game state management
 const gameState = {
   players: new Map(),

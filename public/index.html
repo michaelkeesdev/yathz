@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Yahtzee Game</title>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
         * {
             margin: 0;
@@ -181,6 +182,7 @@
             gap: 5px;
             margin: 20px 0;
             font-size: 14px;
+            overflow-x: auto;
         }
 
         .scorecard-header {
@@ -196,6 +198,10 @@
             padding: 8px;
             text-align: center;
             background: #f8f9fa;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .scorecard-cell.clickable {
@@ -271,9 +277,67 @@
             padding: 5px 0;
             border-bottom: 1px solid #ddd;
         }
+
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .connected {
+            background: #4caf50;
+            color: white;
+        }
+
+        .disconnected {
+            background: #f44336;
+            color: white;
+        }
+
+        .error-message {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            color: #c62828;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            text-align: center;
+        }
+
+        .players-in-room {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .players-in-room h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .player-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .player-list li {
+            padding: 5px 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .player-list li:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 <body>
+    <div class="connection-status" id="connection-status">Connecting...</div>
+    
     <div class="container">
         <!-- Welcome Screen -->
         <div id="welcome-screen" class="screen active">
@@ -282,7 +346,8 @@
                 <label for="player-name">Enter your name:</label>
                 <input type="text" id="player-name" placeholder="Your name" maxlength="20">
             </div>
-            <button class="btn" onclick="createGuestAccount()">Create Guest Account</button>
+            <button class="btn" onclick="registerPlayer()">Join Game</button>
+            <div id="welcome-error" class="error-message" style="display: none;"></div>
         </div>
 
         <!-- Lobby Screen -->
@@ -302,19 +367,25 @@
                     <p>No rooms available. Create one!</p>
                 </div>
             </div>
+            
+            <div id="lobby-error" class="error-message" style="display: none;"></div>
         </div>
 
         <!-- Game Room Screen -->
         <div id="room-screen" class="screen">
             <h2 id="room-title">Room: </h2>
-            <div id="players-list">
+            
+            <div class="players-in-room">
                 <h3>Players in room:</h3>
-                <div id="players-container"></div>
+                <ul class="player-list" id="players-list"></ul>
             </div>
+            
             <div class="game-controls">
                 <button class="btn" id="start-game-btn" onclick="startGame()" disabled>Start Game</button>
                 <button class="btn" onclick="leaveRoom()">Leave Room</button>
             </div>
+            
+            <div id="room-error" class="error-message" style="display: none;"></div>
         </div>
 
         <!-- Game Screen -->
@@ -333,8 +404,8 @@
                 <div class="rolls-left">
                     Rolls left: <span id="rolls-count">3</span>
                 </div>
-                <button class="btn" id="roll-btn" onclick="rollDice()">Roll Dice</button>
-                <button class="btn extra-roll-btn" id="extra-roll-btn" onclick="useExtraRoll()" disabled>
+                <button class="btn" id="roll-btn" onclick="rollDice()" disabled>Roll Dice</button>
+                <button class="btn extra-roll-btn" id="extra-roll-btn" onclick="buyExtraRoll()" disabled>
                     5 Points - Extra Roll
                 </button>
             </div>
@@ -350,6 +421,8 @@
             <div class="game-controls">
                 <button class="btn" onclick="endTurn()" id="end-turn-btn" disabled>End Turn</button>
             </div>
+            
+            <div id="game-error" class="error-message" style="display: none;"></div>
         </div>
 
         <!-- Game Over Screen -->
@@ -364,13 +437,16 @@
     </div>
 
     <script>
+        // Socket.IO connection
+        const socket = io();
+        
         // Game state
         let gameState = {
+            isConnected: false,
             currentPlayer: null,
-            rooms: {},
             currentRoom: null,
-            players: {},
-            gameData: null
+            gameData: null,
+            rooms: []
         };
 
         // Yahtzee scoring categories
@@ -390,6 +466,131 @@
             chance: { name: 'Chance', type: 'special' }
         };
 
+        // Socket event listeners
+        socket.on('connect', () => {
+            console.log('🔗 Connected to server');
+            gameState.isConnected = true;
+            updateConnectionStatus();
+        });
+
+        socket.on('disconnect', () => {
+            console.log('❌ Disconnected from server');
+            gameState.isConnected = false;
+            updateConnectionStatus();
+        });
+
+        socket.on('player_registered', (player) => {
+            console.log('👤 Player registered:', player);
+            gameState.currentPlayer = player;
+            document.getElementById('current-player-name').textContent = player.name;
+            showScreen('lobby-screen');
+        });
+
+        socket.on('rooms_updated', (rooms) => {
+            console.log('🏠 Rooms updated:', rooms);
+            gameState.rooms = rooms;
+            updateRoomsList();
+        });
+
+        socket.on('room_joined', (room) => {
+            console.log('🚪 Joined room:', room);
+            gameState.currentRoom = room;
+            document.getElementById('room-title').textContent = 'Room: ' + room.name;
+            showScreen('room-screen');
+        });
+
+        socket.on('room_players_updated', (players) => {
+            console.log('👥 Room players updated:', players);
+            updatePlayersInRoom(players);
+        });
+
+        socket.on('left_room', () => {
+            console.log('👋 Left room');
+            gameState.currentRoom = null;
+            showScreen('lobby-screen');
+        });
+
+        socket.on('game_started', (gameData) => {
+            console.log('🎮 Game started:', gameData);
+            gameState.gameData = gameData;
+            initializeGame();
+            showScreen('game-screen');
+        });
+
+        socket.on('dice_rolled', (data) => {
+            console.log('🎲 Dice rolled:', data);
+            gameState.gameData.dice = data.dice;
+            gameState.gameData.rollsLeft = data.rollsLeft;
+            updateDiceDisplay();
+            updateGameControls();
+        });
+
+        socket.on('dice_selected', (data) => {
+            console.log('🎯 Dice selected:', data);
+            gameState.gameData.selectedDice = data.selectedDice;
+            updateDiceDisplay();
+        });
+
+        socket.on('extra_roll_bought', (data) => {
+            console.log('💰 Extra roll bought:', data);
+            gameState.gameData.rollsLeft = data.rollsLeft;
+            gameState.gameData.selectedDice = data.selectedDice;
+            
+            // Update current player's points
+            const currentPlayer = getCurrentPlayer();
+            if (currentPlayer) {
+                currentPlayer.points = data.playerPoints;
+            }
+            
+            updateDiceDisplay();
+            updateGameDisplay();
+        });
+
+        socket.on('turn_changed', (data) => {
+            console.log('🔄 Turn changed:', data);
+            gameState.gameData.currentPlayerIndex = data.currentPlayerIndex;
+            gameState.gameData.rollsLeft = data.rollsLeft;
+            gameState.gameData.selectedDice = data.selectedDice;
+            gameState.gameData.dice = data.dice;
+            
+            // Update scores
+            data.scores.forEach(playerScore => {
+                const player = gameState.gameData.players.find(p => p.id === playerScore.id);
+                if (player) {
+                    player.scores = playerScore.scores;
+                }
+            });
+            
+            updateDiceDisplay();
+            updateScorecard();
+            updateGameDisplay();
+        });
+
+        socket.on('game_over', (data) => {
+            console.log('🏆 Game over:', data);
+            displayGameOver(data.winner, data.finalScores);
+            showScreen('game-over-screen');
+        });
+
+        socket.on('error', (message) => {
+            console.error('❌ Server error:', message);
+            showErrorMessage(message);
+        });
+
+        // Add this missing function to handle game over display
+        function displayGameOver(winner, finalScores) {
+    document.getElementById('winner-announcement').textContent = `🏆 ${winner.name} wins with ${winner.totalScore} points!`;
+    
+    const scoresContainer = document.getElementById('final-scores');
+    scoresContainer.innerHTML = finalScores.map((player, index) => `
+        <div class="final-score">
+            <span>${index + 1}. ${player.name}</span>
+            <span><strong>${player.totalScore} points</strong></span>
+        </div>
+    `).join('');
+}
+
+        // UI Functions
         function showScreen(screenId) {
             document.querySelectorAll('.screen').forEach(screen => {
                 screen.classList.remove('active');
@@ -397,149 +598,115 @@
             document.getElementById(screenId).classList.add('active');
         }
 
-        function createGuestAccount() {
+        function updateConnectionStatus() {
+            const statusEl = document.getElementById('connection-status');
+            if (gameState.isConnected) {
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'connection-status connected';
+            } else {
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'connection-status disconnected';
+            }
+        }
+
+        function showErrorMessage(message) {
+            const currentScreen = document.querySelector('.screen.active');
+            let errorEl = currentScreen.querySelector('.error-message');
+            
+            if (errorEl) {
+                errorEl.textContent = message;
+                errorEl.style.display = 'block';
+                
+                setTimeout(() => {
+                    errorEl.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Player and Room Functions
+        function registerPlayer() {
             const name = document.getElementById('player-name').value.trim();
             if (!name) {
-                alert('Please enter a name');
+                showErrorMessage('Please enter a name');
                 return;
             }
 
-            const playerId = 'player_' + Date.now();
-            gameState.currentPlayer = { id: playerId, name: name, points: 0 };
-            gameState.players[playerId] = gameState.currentPlayer;
-            
-            document.getElementById('current-player-name').textContent = name;
-            showScreen('lobby-screen');
-            updateRoomsList();
+            socket.emit('register_player', { name: name });
         }
 
         function createRoom() {
             const roomName = document.getElementById('room-name').value.trim();
             if (!roomName) {
-                alert('Please enter a room name');
+                showErrorMessage('Please enter a room name');
                 return;
             }
 
-            const roomId = 'room_' + Date.now();
-            gameState.rooms[roomId] = {
-                id: roomId,
-                name: roomName,
-                players: [gameState.currentPlayer.id],
-                maxPlayers: 4,
-                gameStarted: false
-            };
-
-            gameState.currentRoom = roomId;
+            socket.emit('create_room', { roomName: roomName });
             document.getElementById('room-name').value = '';
-            joinRoom(roomId);
         }
 
         function joinRoom(roomId) {
-            const room = gameState.rooms[roomId];
-            if (!room || room.players.length >= room.maxPlayers) {
-                alert('Room is full or does not exist');
-                return;
-            }
-
-            if (!room.players.includes(gameState.currentPlayer.id)) {
-                room.players.push(gameState.currentPlayer.id);
-            }
-            
-            gameState.currentRoom = roomId;
-            document.getElementById('room-title').textContent = 'Room: ' + room.name;
-            updatePlayersInRoom();
-            showScreen('room-screen');
+            socket.emit('join_room', { roomId: roomId });
         }
 
         function leaveRoom() {
-            if (gameState.currentRoom) {
-                const room = gameState.rooms[gameState.currentRoom];
-                room.players = room.players.filter(id => id !== gameState.currentPlayer.id);
-                
-                if (room.players.length === 0) {
-                    delete gameState.rooms[gameState.currentRoom];
-                }
-                
-                gameState.currentRoom = null;
-            }
-            showScreen('lobby-screen');
-            updateRoomsList();
+            socket.emit('leave_room');
         }
 
         function updateRoomsList() {
             const container = document.getElementById('rooms-container');
-            const rooms = Object.values(gameState.rooms);
             
-            if (rooms.length === 0) {
+            if (gameState.rooms.length === 0) {
                 container.innerHTML = '<p>No rooms available. Create one!</p>';
                 return;
             }
 
-            container.innerHTML = rooms.map(room => `
+            container.innerHTML = gameState.rooms.map(room => `
                 <div class="room-item">
                     <div class="room-info">
                         <h3>${room.name}</h3>
                         <p>Players: ${room.players.length}/${room.maxPlayers}</p>
+                        <p>Status: ${room.gameStarted ? 'Game in progress' : 'Waiting for players'}</p>
                     </div>
                     <button class="btn" onclick="joinRoom('${room.id}')" 
-                            ${room.players.length >= room.maxPlayers ? 'disabled' : ''}>
-                        Join
+                            ${room.players.length >= room.maxPlayers || room.gameStarted ? 'disabled' : ''}>
+                        ${room.gameStarted ? 'In Game' : 'Join'}
                     </button>
                 </div>
             `).join('');
         }
 
-        function updatePlayersInRoom() {
-            const container = document.getElementById('players-container');
-            const room = gameState.rooms[gameState.currentRoom];
+        function updatePlayersInRoom(players) {
+            const container = document.getElementById('players-list');
             
-            const playersHtml = room.players.map(playerId => {
-                const player = gameState.players[playerId];
-                return `<p>• ${player.name}</p>`;
-            }).join('');
-            
-            container.innerHTML = playersHtml;
-            
-            const startBtn = document.getElementById('start-game-btn');
-            startBtn.disabled = room.players.length < 2;
-        }
-
-        function startGame() {
-            const room = gameState.rooms[gameState.currentRoom];
-            if (room.players.length < 2) {
-                alert('Need at least 2 players to start');
+            if (!players || players.length === 0) {
+                container.innerHTML = '<li>No players in room</li>';
                 return;
             }
 
-            // Initialize game data
-            gameState.gameData = {
-                players: room.players.map(id => ({
-                    id: id,
-                    name: gameState.players[id].name,
-                    points: gameState.players[id].points,
-                    scores: {},
-                    totalScore: 0
-                })),
-                currentPlayerIndex: 0,
-                currentRound: 1,
-                maxRounds: 13,
-                dice: [1, 1, 1, 1, 1],
-                selectedDice: [],
-                rollsLeft: 3,
-                gameOver: false
-            };
+            container.innerHTML = players.map(player => 
+                `<li>• ${player.name} (${player.points} points)</li>`
+            ).join('');
+            
+            const startBtn = document.getElementById('start-game-btn');
+            startBtn.disabled = players.length < 2;
+        }
 
-            // Initialize all players' scores
-            gameState.gameData.players.forEach(player => {
-                Object.keys(CATEGORIES).forEach(category => {
-                    player.scores[category] = null;
-                });
-            });
+        function startGame() {
+            socket.emit('start_game');
+        }
 
+        function backToLobby() {
+            gameState.gameData = null;
+            gameState.currentRoom = null;
+            showScreen('lobby-screen');
+        }
+
+        // Game Functions
+        function initializeGame() {
             initializeDice();
             updateScorecard();
             updateGameDisplay();
-            showScreen('game-screen');
         }
 
         function initializeDice() {
@@ -550,13 +717,15 @@
                 const die = document.createElement('div');
                 die.className = 'die';
                 die.dataset.index = i;
-                die.onclick = () => toggleDieSelection(i);
+                die.onclick = () => selectDie(i);
                 container.appendChild(die);
             }
             updateDiceDisplay();
         }
 
         function updateDiceDisplay() {
+            if (!gameState.gameData) return;
+            
             const dice = document.querySelectorAll('.die');
             dice.forEach((die, index) => {
                 const value = gameState.gameData.dice[index];
@@ -588,20 +757,16 @@
             return `<div class="die-dots">${dotsHtml}</div>`;
         }
 
-        function toggleDieSelection(index) {
-            if (gameState.gameData.rollsLeft === 3) return; // Can't select before first roll
+        function selectDie(index) {
+            if (!gameState.gameData || gameState.gameData.rollsLeft === 3) return;
+            if (!isCurrentPlayerTurn()) return;
             
-            const selectedIndex = gameState.gameData.selectedDice.indexOf(index);
-            if (selectedIndex > -1) {
-                gameState.gameData.selectedDice.splice(selectedIndex, 1);
-            } else {
-                gameState.gameData.selectedDice.push(index);
-            }
-            updateDiceDisplay();
+            socket.emit('select_dice', { diceIndex: index });
         }
 
         function rollDice() {
-            if (gameState.gameData.rollsLeft <= 0) return;
+            if (!gameState.gameData || gameState.gameData.rollsLeft <= 0) return;
+            if (!isCurrentPlayerTurn()) return;
 
             // Animate dice
             document.querySelectorAll('.die').forEach(die => {
@@ -609,77 +774,95 @@
             });
 
             setTimeout(() => {
-                // Roll unselected dice
-                for (let i = 0; i < 5; i++) {
-                    if (!gameState.gameData.selectedDice.includes(i)) {
-                        gameState.gameData.dice[i] = Math.floor(Math.random() * 6) + 1;
-                    }
-                }
-
-                gameState.gameData.rollsLeft--;
-                updateDiceDisplay();
-                updateGameDisplay();
-
-                // Remove animation
                 document.querySelectorAll('.die').forEach(die => {
                     die.classList.remove('rolling');
                 });
-
-                // Enable end turn if no rolls left
-                if (gameState.gameData.rollsLeft === 0) {
-                    document.getElementById('end-turn-btn').disabled = false;
-                }
             }, 500);
+
+            socket.emit('roll_dice');
         }
 
-        function useExtraRoll() {
+        function buyExtraRoll() {
+            if (!isCurrentPlayerTurn()) return;
+            
             const currentPlayer = getCurrentPlayer();
-            if (currentPlayer.points < 5) {
-                alert('Not enough points for extra roll!');
+            if (!currentPlayer || currentPlayer.points < 5) {
+                showErrorMessage('Not enough points for extra roll!');
                 return;
             }
 
-            currentPlayer.points -= 5;
-            gameState.gameData.rollsLeft = 1;
-            gameState.gameData.selectedDice = [];
-            updateGameDisplay();
+            socket.emit('buy_extra_roll');
         }
 
         function updateGameDisplay() {
+            if (!gameState.gameData) return;
+            
             const currentPlayer = getCurrentPlayer();
-            document.getElementById('turn-player').textContent = currentPlayer.name;
-            document.getElementById('player-points').textContent = currentPlayer.points;
+            const turnPlayer = gameState.gameData.players[gameState.gameData.currentPlayerIndex];
+            
+            document.getElementById('turn-player').textContent = turnPlayer.name;
+            document.getElementById('player-points').textContent = currentPlayer ? currentPlayer.points : 0;
             document.getElementById('rolls-count').textContent = gameState.gameData.rollsLeft;
             
-            const rollBtn = document.getElementById('roll-btn');
-            const extraRollBtn = document.getElementById('extra-roll-btn');
-            
-            rollBtn.disabled = gameState.gameData.rollsLeft <= 0;
-            extraRollBtn.disabled = currentPlayer.points < 5 || gameState.gameData.rollsLeft > 0;
-            
-            updateScorecard();
+            updateGameControls();
         }
 
+        function updateGameControls() {
+    if (!gameState.gameData) return;
+    
+    const currentPlayer = getCurrentPlayer();
+    const isMyTurn = isCurrentPlayerTurn();
+    
+    const rollBtn = document.getElementById('roll-btn');
+    const extraRollBtn = document.getElementById('extra-roll-btn');
+    const endTurnBtn = document.getElementById('end-turn-btn');
+    
+    rollBtn.disabled = !isMyTurn || gameState.gameData.rollsLeft <= 0;
+    extraRollBtn.disabled = !isMyTurn || !currentPlayer || currentPlayer.points < 5 || gameState.gameData.rollsLeft > 0;
+    endTurnBtn.disabled = !isMyTurn || gameState.gameData.rollsLeft === 3;
+    
+    // Force scorecard update when it's the player's turn and they've rolled
+    if (isMyTurn && gameState.gameData.rollsLeft < 3) {
+        updateScorecard();
+    }
+}
+
         function getCurrentPlayer() {
-            return gameState.gameData.players[gameState.gameData.currentPlayerIndex];
+            if (!gameState.gameData || !gameState.currentPlayer) return null;
+            return gameState.gameData.players.find(p => p.id === gameState.currentPlayer.id);
+        }
+
+        function isCurrentPlayerTurn() {
+            if (!gameState.gameData || !gameState.currentPlayer) return false;
+            const turnPlayer = gameState.gameData.players[gameState.gameData.currentPlayerIndex];
+            return turnPlayer.id === gameState.currentPlayer.id;
         }
 
         function updateScorecard() {
+            if (!gameState.gameData) return;
+            
             const container = document.getElementById('scorecard');
             const currentPlayer = getCurrentPlayer();
+            const isMyTurn = isCurrentPlayerTurn();
+            
+            // Determine how many columns we need (max 4 players for display)
+            const displayPlayers = gameState.gameData.players.slice(0, 4);
+            const colCount = displayPlayers.length + 1;
+            
+            container.style.gridTemplateColumns = `1fr repeat(${displayPlayers.length}, 80px)`;
             
             let html = `
                 <div class="scorecard-header">Category</div>
-                ${gameState.gameData.players.map(p => `<div class="scorecard-header">${p.name}</div>`).join('')}
+                ${displayPlayers.map(p => `<div class="scorecard-header">${p.name}</div>`).join('')}
             `;
 
             Object.entries(CATEGORIES).forEach(([key, category]) => {
                 html += `<div class="scorecard-cell">${category.name}</div>`;
                 
-                gameState.gameData.players.forEach((player, playerIndex) => {
+                displayPlayers.forEach((player) => {
                     const score = player.scores[key];
-                    const isCurrentPlayer = playerIndex === gameState.gameData.currentPlayerIndex;
-                    const canScore = isCurrentPlayer && score === null && gameState.gameData.rollsLeft < 3;
+                    const isCurrentPlayerCell = player.id === gameState.currentPlayer.id;
+                    const canScore = isMyTurn && isCurrentPlayerCell && score === null && gameState.gameData.rollsLeft < 3;
                     
                     let cellClass = 'scorecard-cell';
                     if (canScore) cellClass += ' clickable';
@@ -695,7 +878,7 @@
 
             // Add totals
             html += `<div class="scorecard-cell"><strong>Total</strong></div>`;
-            gameState.gameData.players.forEach(player => {
+            displayPlayers.forEach(player => {
                 const total = Object.values(player.scores).reduce((sum, score) => sum + (score || 0), 0);
                 html += `<div class="scorecard-cell filled"><strong>${total}</strong></div>`;
             });
@@ -704,134 +887,120 @@
         }
 
         function calculateScore(category) {
-            const dice = gameState.gameData.dice;
-            const counts = {};
-            
-            dice.forEach(die => {
-                counts[die] = (counts[die] || 0) + 1;
-            });
+    const dice = gameState.gameData.dice;
+    const counts = {};
+    
+    dice.forEach(die => {
+        counts[die] = (counts[die] || 0) + 1;
+    });
 
-            const cat = CATEGORIES[category];
-            
-            if (cat.type === 'number') {
-                return (counts[cat.number] || 0) * cat.number;
-            }
+    const cat = CATEGORIES[category];
+    
+    if (cat.type === 'number') {
+        return (counts[cat.number] || 0) * cat.number;
+    }
 
-            switch (category) {
-                case 'threeOfKind':
-                    return Object.values(counts).some(count => count >= 3) ? dice.reduce((a, b) => a + b) : 0;
-                case 'fourOfKind':
-                    return Object.values(counts).some(count => count >= 4) ? dice.reduce((a, b) => a + b) : 0;
-                case 'fullHouse':
-                    const values = Object.values(counts).sort();
-                    return (values.length === 2 && values[0] === 2 && values[1] === 3) ? 25 : 0;
-                case 'smallStraight':
-                    const sortedDice = [...new Set(dice)].sort();
-                    const straights = [
-                        [1,2,3,4], [2,3,4,5], [3,4,5,6]
-                    ];
-                    return straights.some(straight => 
-                        straight.every(num => sortedDice.includes(num))
-                    ) ? 30 : 0;
-                case 'largeStraight':
-                    const sortedUnique = [...new Set(dice)].sort();
-                    return (sortedUnique.length === 5 && 
-                           (sortedUnique.join('') === '12345' || sortedUnique.join('') === '23456')) ? 40 : 0;
-                case 'yahtzee':
-                    return Object.values(counts).some(count => count === 5) ? 50 : 0;
-                case 'chance':
-                    return dice.reduce((a, b) => a + b);
-                default:
-                    return 0;
-            }
-        }
+    switch (category) {
+        case 'threeOfKind':
+            return Object.values(counts).some(count => count >= 3) ? dice.reduce((a, b) => a + b) : 0;
+        case 'fourOfKind':
+            return Object.values(counts).some(count => count >= 4) ? dice.reduce((a, b) => a + b) : 0;
+        case 'fullHouse':
+            const values = Object.values(counts).sort();
+            return (values.length === 2 && values[0] === 2 && values[1] === 3) ? 25 : 0;
+        case 'smallStraight':
+            const sortedDice = [...new Set(dice)].sort();
+            const straights = [
+                [1,2,3,4], [2,3,4,5], [3,4,5,6]
+            ];
+            return straights.some(straight => 
+                straight.every(num => sortedDice.includes(num))
+            ) ? 30 : 0;
+        case 'largeStraight':
+            const sortedUnique = [...new Set(dice)].sort();
+            return (sortedUnique.length === 5 && 
+                   (sortedUnique.join('') === '12345' || sortedUnique.join('') === '23456')) ? 40 : 0;
+        case 'yahtzee':
+            return Object.values(counts).some(count => count === 5) ? 50 : 0;
+        case 'chance':
+            return dice.reduce((a, b) => a + b);
+        default:
+            return 0;
+    }
+}
 
-        function scoreCategory(category) {
-            const currentPlayer = getCurrentPlayer();
-            const score = calculateScore(category);
-            
-            currentPlayer.scores[category] = score;
-            
-            // Award points for scoring
-            if (score > 0) {
-                currentPlayer.points += Math.floor(score / 10);
-            }
-            
-            nextTurn();
-        }
+function scoreCategory(category) {
+    if (!isCurrentPlayerTurn()) {
+        console.log('Not your turn!');
+        return;
+    }
+    
+    const currentPlayer = getCurrentPlayer();
+    if (!currentPlayer || currentPlayer.scores[category] !== null) {
+        console.log('Category already scored or player not found');
+        return;
+    }
+    
+    if (gameState.gameData.rollsLeft === 3) {
+        console.log('Must roll dice first!');
+        return;
+    }
+    
+    console.log(`Scoring category: ${category}`);
+    socket.emit('score_category', { category: category });
+}
 
-        function endTurn() {
-            // Force score a 0 in any available category
-            const currentPlayer = getCurrentPlayer();
-            const availableCategories = Object.keys(CATEGORIES).filter(cat => 
-                currentPlayer.scores[cat] === null
-            );
-            
-            if (availableCategories.length > 0) {
-                const category = availableCategories[0];
-                currentPlayer.scores[category] = 0;
-                nextTurn();
-            }
-        }
+function endTurn() {
+    if (!isCurrentPlayerTurn()) return;
+    
+    // Send end turn to server - server will handle forcing a 0 score
+    socket.emit('end_turn');
+}
 
-        function nextTurn() {
-            // Check if game is over
-            const allCategoriesScored = gameState.gameData.players.every(player =>
-                Object.values(player.scores).every(score => score !== null)
-            );
+function nextTurn(roomId) {
+    const room = gameState.rooms.get(roomId);
+    const gameData = room.gameData;
 
-            if (allCategoriesScored) {
-                endGame();
-                return;
-            }
+    // Next player
+    gameData.currentPlayerIndex =
+      (gameData.currentPlayerIndex + 1) % gameData.players.length;
 
-            // Next player
-            gameState.gameData.currentPlayerIndex = 
-                (gameState.gameData.currentPlayerIndex + 1) % gameState.gameData.players.length;
-            
-            // Reset for next turn
-            gameState.gameData.rollsLeft = 3;
-            gameState.gameData.selectedDice = [];
-            gameState.gameData.dice = [1, 1, 1, 1, 1];
-            
-            document.getElementById('end-turn-btn').disabled = true;
-            updateDiceDisplay();
-            updateGameDisplay();
-        }
+    // Reset turn
+    gameData.rollsLeft = 3;
+    gameData.selectedDice = [];
+    gameData.dice = [1, 1, 1, 1, 1];
 
-        function endGame() {
-            // Calculate final scores
-            gameState.gameData.players.forEach(player => {
-                player.totalScore = Object.values(player.scores).reduce((sum, score) => sum + (score || 0), 0);
-            });
+    // Get updated player points from main game state
+    const updatedPlayers = gameData.players.map(player => {
+      const mainPlayer = gameState.players.get(player.id);
+      if (mainPlayer) {
+        player.points = mainPlayer.points;
+      }
+      return player;
+    });
 
-            // Sort by score
-            const sortedPlayers = [...gameState.gameData.players].sort((a, b) => b.totalScore - a.totalScore);
-            
-            // Display results
-            const winner = sortedPlayers[0];
-            document.getElementById('winner-announcement').textContent = `${winner.name} wins with ${winner.totalScore} points!`;
-            
-            const scoresHtml = sortedPlayers.map((player, index) => `
-                <div class="final-score">
-                    <span>${index + 1}. ${player.name}</span>
-                    <span>${player.totalScore} points</span>
-                </div>
-            `).join('');
-            
-            document.getElementById('final-scores').innerHTML = scoresHtml;
-            showScreen('game-over-screen');
-        }
+    io.to(roomId).emit("turn_changed", {
+      currentPlayerIndex: gameData.currentPlayerIndex,
+      rollsLeft: gameData.rollsLeft,
+      selectedDice: gameData.selectedDice,
+      dice: gameData.dice,
+      scores: gameData.players.map((p) => ({ id: p.id, scores: p.scores })),
+      players: updatedPlayers, // Send updated player data including points
+    });
+  }
 
-        function backToLobby() {
-            gameState.gameData = null;
-            gameState.currentRoom = null;
-            showScreen('lobby-screen');
-            updateRoomsList();
-        }
+function endGame() {
+    // This function is now handled entirely by the server
+    // The client will receive 'game_over' events from the server
+    // Remove local game logic as it's managed server-side
+    console.log('Game end is handled by server');
+}
 
-        // Initialize the game
-        updateRoomsList();
+function backToLobby() {
+    gameState.gameData = null;
+    gameState.currentRoom = null;
+    showScreen('lobby-screen');
+    updateRoomsList();
+}
     </script>
 </body>
-</html>
