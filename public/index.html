@@ -237,15 +237,6 @@
             font-size: 18px;
         }
 
-        .points-display {
-            background: #e8f5e8;
-            border: 2px solid #4caf50;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 10px 0;
-            text-align: center;
-        }
-
         .extra-roll-btn {
             background: linear-gradient(45deg, #ff6b6b, #ff8e8e);
             font-size: 18px;
@@ -280,12 +271,19 @@
 
         .connection-status {
             position: fixed;
+            display: flex;
+            flex-direction: row;
+            width: auto;
+            gap: 8px;
             top: 10px;
             right: 10px;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            font-weight: bold;
+            
+            #connection-status, #logout {
+                padding: 5px 10px;
+                border-radius: 5px;
+                font-size: 12px;
+                font-weight: bold;
+            }
         }
 
         .connected {
@@ -333,15 +331,94 @@
         .player-list li:last-child {
             border-bottom: none;
         }
+        .lobby-title {
+    font-size: 32px;
+    color: #222;
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.lobby-actions {
+    margin-bottom: 30px;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.create-room label {
+    font-weight: bold;
+    margin-bottom: 5px;
+    display: block;
+    color: #444;
+}
+
+.create-room-fields {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.create-room input {
+    flex: 1;
+}
+
+.room-list-container {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.room-list-title {
+    font-size: 20px;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.room-item {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 15px;
+    margin: 10px 0;
+    display: flex;
+    justify-content: space-between;
+    background: #fff;
+    transition: box-shadow 0.3s;
+}
+
+.room-item:hover {
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.you-are {
+    text-align: center;
+    margin-top: 30px;
+    color: #666;
+}
+
+.btn.small {
+    font-size: 14px;
+    padding: 6px 14px;
+    margin-top: 10px;
+    background: linear-gradient(45deg, #cfd8dc, #eceff1);
+    color: #333;
+}
+
     </style>
 </head>
 <body>
-    <div class="connection-status" id="connection-status">Connecting...</div>
+    <div class="connection-status">
+        <div id="connection-status">Connecting...</div>
+        <button id="logout" onclick="logoutUser()">Log Out</button>
+    </div>
+
+    
     
     <div class="container">
         <!-- Welcome Screen -->
         <div id="welcome-screen" class="screen active">
-            <h1>🎲 Yahtzee Game 🎲</h1>
+            <h1>🎲 Yahtzeeken 🎲</h1>
             <div class="input-group">
                 <label for="player-name">Enter your name:</label>
                 <input type="text" id="player-name" placeholder="Your name" maxlength="20">
@@ -351,26 +428,35 @@
         </div>
 
         <!-- Lobby Screen -->
-        <div id="lobby-screen" class="screen">
-            <h2>Welcome to the Lobby</h2>
-            <p>Hello, <span id="current-player-name"></span>!</p>
-            
-            <div class="input-group">
-                <label for="room-name">Create New Room:</label>
-                <input type="text" id="room-name" placeholder="Room name" maxlength="30">
-                <button class="btn" onclick="createRoom()">Create Room</button>
-            </div>
-
-            <div class="room-list">
-                <h3>Available Rooms:</h3>
-                <div id="rooms-container">
-                    <p>No rooms available. Create one!</p>
-                </div>
-            </div>
-            
-            <div id="lobby-error" class="error-message" style="display: none;"></div>
+        <!-- Lobby Screen -->
+<div id="lobby-screen" class="screen">
+    <h2 class="lobby-title">🎲 Yahtzeeken</h2>
+  
+    <div class="lobby-actions">
+      <div class="input-group create-room">
+        <label for="room-name">Create a New Room</label>
+        <div class="create-room-fields">
+          <input type="text" id="room-name" placeholder="Enter room name" maxlength="30">
+          <button class="btn" onclick="createRoom()">Create</button>
         </div>
-
+      </div>
+    </div>
+  
+    <div class="room-list-container">
+      <h3 class="room-list-title">🧩 Available Rooms</h3>
+      <div id="rooms-container" class="room-list">
+        <p>No rooms available. Create one to get started!</p>
+      </div>
+    </div>
+  
+    <div class="you-are">
+      <p>👋 Hello, <strong id="current-player-name"></strong>!</p>
+      <button class="btn small" onclick="logoutUser()">Switch Account</button>
+    </div>
+  
+    <div id="lobby-error" class="error-message" style="display: none;"></div>
+  </div>
+  
         <!-- Game Room Screen -->
         <div id="room-screen" class="screen">
             <h2 id="room-title">Room: </h2>
@@ -394,10 +480,6 @@
             
             <div class="current-player" id="current-turn">
                 Current Player: <span id="turn-player"></span>
-            </div>
-
-            <div class="points-display">
-                <strong>Your Points: <span id="player-points">0</span></strong>
             </div>
 
             <div class="game-controls">
@@ -480,11 +562,14 @@
         });
 
         socket.on('player_registered', (player) => {
-            console.log('👤 Player registered:', player);
-            gameState.currentPlayer = player;
-            document.getElementById('current-player-name').textContent = player.name;
-            showScreen('lobby-screen');
-        });
+            // Save socket.id as user ID
+localStorage.setItem('yahtzeeUserId', player.id);
+
+    gameState.currentPlayer = player;
+    document.getElementById('current-player-name').textContent = player.name;
+    showScreen('lobby-screen');
+});
+
 
         socket.on('player_points_updated', (data) => {
             const player = gameState.gameData.players.find(p => p.id === data.playerId);
@@ -528,14 +613,15 @@
             initializeGame();
             showScreen('game-screen');
         });
-
         socket.on('dice_rolled', (data) => {
-            console.log('🎲 Dice rolled:', data);
-            gameState.gameData.dice = data.dice;
-            gameState.gameData.rollsLeft = data.rollsLeft;
-            updateDiceDisplay();
-            updateGameControls();
-        });
+    console.log('🎲 Dice rolled:', data);
+    gameState.gameData.dice = data.dice;
+    gameState.gameData.rollsLeft = data.rollsLeft;
+
+    updateDiceDisplay();
+    updateGameControls();
+    updateGameDisplay(); // ✅ Add this line
+});
 
         socket.on('dice_selected', (data) => {
             console.log('🎯 Dice selected:', data);
@@ -544,19 +630,25 @@
         });
 
         socket.on('extra_roll_bought', (data) => {
-            console.log('💰 Extra roll bought:', data);
-            gameState.gameData.rollsLeft = data.rollsLeft;
-            gameState.gameData.selectedDice = data.selectedDice;
-            
-            // Update current player's points
-            const currentPlayer = getCurrentPlayer();
-            if (currentPlayer) {
-                currentPlayer.points = data.playerPoints;
-            }
-            
-            updateDiceDisplay();
-            updateGameDisplay();
-        });
+    gameState.gameData.dice = data.dice;
+    gameState.gameData.rollsLeft = data.rollsLeft;
+
+    // Update scores
+    data.scores.forEach(playerScore => {
+        const player = gameState.gameData.players.find(p => p.id === playerScore.id);
+        if (player) {
+            player.scores = playerScore.scores;
+        }
+    });
+
+    // Clear dice selection after reroll
+    gameState.gameData.selectedDice = [];
+
+    updateDiceDisplay();
+    updateGameDisplay();
+    updateScorecard();
+});
+
 
         socket.on('turn_changed', (data) => {
             console.log('🔄 Turn changed:', data);
@@ -614,10 +706,10 @@
             const statusEl = document.getElementById('connection-status');
             if (gameState.isConnected) {
                 statusEl.textContent = 'Connected';
-                statusEl.className = 'connection-status connected';
+                statusEl.className = 'connected';
             } else {
                 statusEl.textContent = 'Disconnected';
-                statusEl.className = 'connection-status disconnected';
+                statusEl.className = 'disconnected';
             }
         }
 
@@ -643,7 +735,8 @@
                 return;
             }
 
-            socket.emit('register_player', { name: name });
+            localStorage.setItem('yahtzeePlayerName', name);
+socket.emit('register_player', { name: name });
         }
 
         function createRoom() {
@@ -664,6 +757,13 @@
         function leaveRoom() {
             socket.emit('leave_room');
         }
+
+        function logoutUser() {
+    localStorage.removeItem('yahtzeePlayerName');
+    localStorage.removeItem('yahtzeeUserId');
+    location.reload();
+}
+
 
         function updateRoomsList() {
             const container = document.getElementById('rooms-container');
@@ -744,10 +844,14 @@
                 die.innerHTML = createDieFace(value);
                 
                 if (gameState.gameData.selectedDice.includes(index)) {
-                    die.classList.add('selected');
-                } else {
-                    die.classList.remove('selected');
-                }
+    die.classList.add('selected');
+    die.style.background = '#ff8a80'; // reddish for reroll
+    die.style.borderColor = '#d32f2f';
+} else {
+    die.classList.remove('selected');
+    die.style.background = 'white';
+    die.style.borderColor = '#333';
+}
             });
         }
 
@@ -770,41 +874,81 @@
         }
 
         function selectDie(index) {
-            if (!gameState.gameData || gameState.gameData.rollsLeft === 3) return;
-            if (!isCurrentPlayerTurn()) return;
-            
-            socket.emit('select_dice', { diceIndex: index });
-        }
+    if (!gameState.gameData || gameState.gameData.rollsLeft === 3) return;
+    if (!isCurrentPlayerTurn()) return;
+
+    const selectedIndex = gameState.gameData.selectedDice.indexOf(index);
+    if (selectedIndex > -1) {
+        gameState.gameData.selectedDice.splice(selectedIndex, 1);
+    } else {
+        gameState.gameData.selectedDice.push(index);
+    }
+
+    socket.emit('select_dice', { diceIndex: index });
+}
 
         function rollDice() {
             if (!gameState.gameData || gameState.gameData.rollsLeft <= 0) return;
             if (!isCurrentPlayerTurn()) return;
 
-            // Animate dice
-            document.querySelectorAll('.die').forEach(die => {
-                die.classList.add('rolling');
-            });
+            const diceElements = document.querySelectorAll('.die');
 
-            setTimeout(() => {
-                document.querySelectorAll('.die').forEach(die => {
-                    die.classList.remove('rolling');
-                });
-            }, 500);
+gameState.gameData.selectedDice.forEach(index => {
+    const die = diceElements[index];
+    if (die) die.classList.add('rolling');
+});
 
-            socket.emit('roll_dice');
+setTimeout(() => {
+    gameState.gameData.selectedDice.forEach(index => {
+        const die = diceElements[index];
+        if (die) die.classList.remove('rolling');
+    });
+}, 500);
+
+            // Invert selection: send indices to keep (i.e., not selected)
+const allDice = [0, 1, 2, 3, 4];
+const diceToKeep = allDice.filter(i => !gameState.gameData.selectedDice.includes(i));
+
+socket.emit('roll_dice', { keep: diceToKeep });
         }
 
         function buyExtraRoll() {
-            if (!isCurrentPlayerTurn()) return;
-            
-            const currentPlayer = getCurrentPlayer();
-            if (!currentPlayer || currentPlayer.points < 5) {
-                showErrorMessage('Not enough points for extra roll!');
-                return;
-            }
+    if (!isCurrentPlayerTurn()) return;
 
-            socket.emit('buy_extra_roll');
-        }
+    const currentPlayer = getCurrentPlayer();
+    const totalScore = Object.values(currentPlayer.scores).reduce((sum, val) => sum + (val || 0), 0);
+
+    if (gameState.gameData.rollsLeft > 0) {
+        showErrorMessage('You still have normal rolls left!');
+        return;
+    }
+
+    if (totalScore < 5) {
+        showErrorMessage('You need at least 5 total points to buy an extra roll!');
+        return;
+    }
+
+    const diceElements = document.querySelectorAll('.die');
+
+// Animate only selected dice
+gameState.gameData.selectedDice.forEach(index => {
+    const die = diceElements[index];
+    if (die) die.classList.add('rolling');
+});
+
+setTimeout(() => {
+    gameState.gameData.selectedDice.forEach(index => {
+        const die = diceElements[index];
+        if (die) die.classList.remove('rolling');
+    });
+
+    // Now trigger server-side reroll
+    socket.emit('buy_extra_roll');
+
+}, 500); // animation duration
+
+}
+
 
         function updateGameDisplay() {
             if (!gameState.gameData) return;
@@ -813,9 +957,8 @@
             const turnPlayer = gameState.gameData.players[gameState.gameData.currentPlayerIndex];
             
             document.getElementById('turn-player').textContent = turnPlayer.name;
-            document.getElementById('player-points').textContent = currentPlayer ? currentPlayer.points : 0;
             document.getElementById('rolls-count').textContent = gameState.gameData.rollsLeft;
-            
+
             updateGameControls();
         }
 
@@ -825,18 +968,25 @@
     const currentPlayer = getCurrentPlayer();
     const isMyTurn = isCurrentPlayerTurn();
     
-    const rollBtn = document.getElementById('roll-btn');
-    const extraRollBtn = document.getElementById('extra-roll-btn');
-    const endTurnBtn = document.getElementById('end-turn-btn');
-    
-    rollBtn.disabled = !isMyTurn || gameState.gameData.rollsLeft <= 0;
-    extraRollBtn.disabled = !isMyTurn || !currentPlayer || currentPlayer.points < 5 || gameState.gameData.rollsLeft > 0;
-    endTurnBtn.disabled = !isMyTurn || gameState.gameData.rollsLeft === 3;
-    
-    // Force scorecard update when it's the player's turn and they've rolled
-    if (isMyTurn && gameState.gameData.rollsLeft < 3) {
-        updateScorecard();
-    }
+    const totalScore = Object.values(currentPlayer.scores).reduce((sum, val) => sum + (val || 0), 0);
+const rollBtn = document.getElementById('roll-btn');
+const extraRollBtn = document.getElementById('extra-roll-btn');
+
+if (!isMyTurn) {
+    rollBtn.style.display = 'none';
+    extraRollBtn.style.display = 'none';
+} else if (gameState.gameData.rollsLeft > 0) {
+    rollBtn.style.display = 'inline-block';
+    extraRollBtn.style.display = 'none';
+    rollBtn.disabled = false;
+} else {
+    rollBtn.style.display = 'none';
+    const totalScore = Object.values(currentPlayer.scores).reduce((sum, val) => sum + (val || 0), 0);
+    extraRollBtn.style.display = totalScore >= 5 ? 'inline-block' : 'none';
+    extraRollBtn.disabled = false;
+}
+
+
 }
 
         function getCurrentPlayer() {
@@ -1014,5 +1164,17 @@ function backToLobby() {
     showScreen('lobby-screen');
     updateRoomsList();
 }
+window.addEventListener('load', () => {
+    const name = localStorage.getItem('yahtzeePlayerName');
+    const storedId = localStorage.getItem('yahtzeeUserId');
+
+    if (name && storedId) {
+        socket.emit('reconnect_player', { playerId: storedId });
+    } else if (name) {
+        socket.emit('register_player', { name: name });
+    }
+});
+
+
     </script>
 </body>

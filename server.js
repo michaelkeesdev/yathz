@@ -74,6 +74,54 @@ io.on("connection", (socket) => {
     socket.emit("player_registered", player);
   });
 
+  socket.on("reconnect_player", (data) => {
+    const { playerId } = data;
+    const player = gameState.players.get(playerId);
+
+    if (!player) {
+      socket.emit("error", "Stored player ID not found.");
+      return;
+    }
+
+    // Update socket ID (in case it changed)
+    player.socketId = socket.id;
+    gameState.players.set(socket.id, player);
+    gameState.players.delete(playerId); // clean up old ID reference
+    gameState.playerRooms.set(socket.id, gameState.playerRooms.get(playerId));
+
+    // Join socket to old room
+    const roomId = gameState.playerRooms.get(playerId);
+    if (roomId) {
+      socket.join(roomId);
+      const room = gameState.rooms.get(roomId);
+
+      // Update room player socket ID
+      if (room) {
+        room.players = room.players.map((id) =>
+          id === playerId ? socket.id : id
+        );
+        const playerData = room.gameData?.players?.find(
+          (p) => p.id === playerId
+        );
+        if (playerData) {
+          playerData.id = socket.id;
+        }
+
+        gameState.playerRooms.set(socket.id, roomId);
+        gameState.playerRooms.delete(playerId);
+      }
+
+      // Send updated player info and game state
+      socket.emit("player_registered", player);
+      socket.emit("room_joined", room);
+      updateRoomPlayers(roomId);
+
+      if (room.gameStarted) {
+        socket.emit("game_started", room.gameData);
+      }
+    }
+  });
+
   // Handle room creation
   socket.on("create_room", (data) => {
     if (!gameState.players.has(socket.id)) {
@@ -166,21 +214,24 @@ io.on("connection", (socket) => {
 
     // Initialize game
     room.gameStarted = true;
+    const dice = Array.from(
+      { length: 5 },
+      () => Math.floor(Math.random() * 6) + 1
+    );
     room.gameData = {
       players: room.players.map((playerId) => {
         const player = gameState.players.get(playerId);
         return {
           id: playerId,
           name: player.name,
-          points: player.points,
           scores: {},
           totalScore: 0,
         };
       }),
       currentPlayerIndex: 0,
-      dice: [1, 1, 1, 1, 1],
+      dice: dice,
       selectedDice: [],
-      rollsLeft: 3,
+      rollsLeft: 2,
       gameOver: false,
     };
 
@@ -197,7 +248,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle dice roll
-  socket.on("roll_dice", () => {
+  socket.on("roll_dice", (data) => {
     const roomId = gameState.playerRooms.get(socket.id);
     if (!roomId) return;
 
@@ -209,13 +260,15 @@ io.on("connection", (socket) => {
 
     if (currentPlayer.id !== socket.id || gameData.rollsLeft <= 0) return;
 
-    // Roll unselected dice
+    const keep = data.keep || [];
+
     for (let i = 0; i < 5; i++) {
-      if (!gameData.selectedDice.includes(i)) {
+      if (!keep.includes(i)) {
         gameData.dice[i] = Math.floor(Math.random() * 6) + 1;
       }
     }
 
+    gameData.selectedDice = [];
     gameData.rollsLeft--;
 
     io.to(roomId).emit("dice_rolled", {
@@ -250,8 +303,6 @@ io.on("connection", (socket) => {
       selectedDice: gameData.selectedDice,
     });
   });
-
-  // Handle extra roll purchase
   socket.on("buy_extra_roll", () => {
     const roomId = gameState.playerRooms.get(socket.id);
     if (!roomId) return;
@@ -262,19 +313,43 @@ io.on("connection", (socket) => {
     const gameData = room.gameData;
     const currentPlayer = gameData.players[gameData.currentPlayerIndex];
 
-    if (currentPlayer.id !== socket.id || currentPlayer.points < 5) return;
+    if (currentPlayer.id !== socket.id) return;
+    if (gameData.rollsLeft > 0) return;
 
-    currentPlayer.points -= 5;
-    gameData.rollsLeft = 1;
-    gameData.selectedDice = [];
+    const totalScore = Object.values(currentPlayer.scores).reduce(
+      (sum, val) => sum + (val || 0),
+      0
+    );
+    if (totalScore < 5) return;
 
-    // Update player points in main state
-    gameState.players.get(socket.id).points = currentPlayer.points;
+    // Deduct 5 points from scored categories
+    const deductFrom = Object.entries(currentPlayer.scores)
+      .filter(([_, val]) => val !== null && val >= 5)
+      .sort((a, b) => b[1] - a[1]);
+
+    let remaining = 5;
+    for (let [key, val] of deductFrom) {
+      if (remaining <= 0) break;
+      const deduct = Math.min(val, remaining);
+      currentPlayer.scores[key] -= deduct;
+      remaining -= deduct;
+    }
+
+    // Directly roll selected dice only
+    for (let i = 0; i < 5; i++) {
+      if (gameData.selectedDice.includes(i)) {
+        gameData.dice[i] = Math.floor(Math.random() * 6) + 1;
+      }
+    }
+
+    // No rolls left after this
+    gameData.rollsLeft = 0;
 
     io.to(roomId).emit("extra_roll_bought", {
-      rollsLeft: gameData.rollsLeft,
       selectedDice: gameData.selectedDice,
-      playerPoints: currentPlayer.points,
+      dice: gameData.dice,
+      scores: gameData.players.map((p) => ({ id: p.id, scores: p.scores })),
+      rollsLeft: gameData.rollsLeft,
     });
   });
 
@@ -394,10 +469,15 @@ io.on("connection", (socket) => {
     gameData.currentPlayerIndex =
       (gameData.currentPlayerIndex + 1) % gameData.players.length;
 
-    // Reset turn
-    gameData.rollsLeft = 3;
+    // Reset selections
     gameData.selectedDice = [];
-    gameData.dice = [1, 1, 1, 1, 1];
+
+    // Perform initial auto-roll
+    gameData.dice = Array.from(
+      { length: 5 },
+      () => Math.floor(Math.random() * 6) + 1
+    );
+    gameData.rollsLeft = 2; // 2 rolls left after auto-roll
 
     io.to(roomId).emit("turn_changed", {
       currentPlayerIndex: gameData.currentPlayerIndex,
