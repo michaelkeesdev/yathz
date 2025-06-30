@@ -311,6 +311,10 @@ io.on("connection", (socket) => {
     if (allCategoriesScored) {
       endGame(roomId);
     } else {
+      io.to(roomId).emit("player_points_updated", {
+        playerId: currentPlayer.id,
+        playerPoints: currentPlayer.points,
+      });
       nextTurn(roomId);
     }
   });

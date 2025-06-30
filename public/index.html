@@ -486,6 +486,18 @@
             showScreen('lobby-screen');
         });
 
+        socket.on('player_points_updated', (data) => {
+            const player = gameState.gameData.players.find(p => p.id === data.playerId);
+            if (player) {
+                player.points = data.playerPoints;
+            }
+
+            const current = getCurrentPlayer();
+            if (current && current.id === data.playerId) {
+                document.getElementById('player-points').textContent = current.points;
+            }
+        });
+
         socket.on('rooms_updated', (rooms) => {
             console.log('🏠 Rooms updated:', rooms);
             gameState.rooms = rooms;
